@@ -1,0 +1,6 @@
+자료/
+build/
+*.bin
+PC_Tools/**/build/
+PC_Tools/**/.dart_tool/
+.pio/
