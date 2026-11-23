@@ -45,6 +45,7 @@ void failsafe() {
 void rcLossFailsafe() {
 	if (controlTime == 0) return; // no RC at all
 	if (!armed) return;
+	if (mode == ALTHOLD) return; // altitude hold doesn't need the sticks; it has its own GCS link check
 #if WEB_RC_ENABLED
 	if (isUsingWebRC()) return; // WebRC handles its own timeout (webRCLossFailsafe)
 #endif

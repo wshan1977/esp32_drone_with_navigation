@@ -17,6 +17,7 @@ class MavId {
   static const setAttitudeTarget = 82;
   static const setPositionTargetLocalNed = 84;
   static const serialControl = 126;
+  static const actuatorControlTarget = 140;
   static const distanceSensor = 132;
   static const extendedSysState = 245;
   static const namedValueFloat = 251;
@@ -38,6 +39,7 @@ const Map<int, (int, int)> _msgInfo = {
   MavId.setAttitudeTarget: (49, 51),
   MavId.setPositionTargetLocalNed: (143, 53),
   MavId.serialControl: (220, 81),
+  MavId.actuatorControlTarget: (181, 41),
   MavId.distanceSensor: (85, 39),
   MavId.extendedSysState: (130, 2),
   MavId.namedValueFloat: (170, 18),
@@ -207,6 +209,18 @@ class MavEncoder {
       p.setUint8(6 + i, id[i]);
     }
     return frame(MavId.paramSet, p);
+  }
+
+  /// 수동 조종 입력. 펌웨어는 z/1000을 스로틀(0..1)로, x·y·r을 피치·롤·요로 쓴다.
+  Uint8List manualControl({double throttle = 0, double roll = 0, double pitch = 0, double yaw = 0, int target = 1}) {
+    int v(double f) => (f.clamp(-1.0, 1.0) * 1000).round();
+    final p = _payload(MavId.manualControl)
+      ..setInt16(0, v(pitch), Endian.little)
+      ..setInt16(2, v(roll), Endian.little)
+      ..setInt16(4, v(throttle.clamp(0.0, 1.0)), Endian.little)
+      ..setInt16(6, v(yaw), Endian.little)
+      ..setUint8(10, target);
+    return frame(MavId.manualControl, p);
   }
 
   /// 목표 고도 (m, 위 +). 펌웨어는 z(NED, 아래 +)만 쓰므로 나머지 필드는 무시 비트를 세운다.

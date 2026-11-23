@@ -4,6 +4,7 @@ import 'package:flutter/painting.dart';
 import '../aoa/aoa_client.dart';
 import '../aoa/floor_plan.dart';
 import '../aoa/locationx_api.dart';
+import '../control/nav_controller.dart';
 import '../drone/drone_link.dart';
 import 'settings.dart';
 
@@ -12,6 +13,7 @@ class AppServices {
   final AppSettings settings = AppSettings.load();
   final DroneLink link = DroneLink();
   final AoaClient aoa = AoaClient();
+  late final NavController nav = NavController(link, aoa, settings);
   final ValueNotifier<FloorPlan?> plan = ValueNotifier(null);
 
   /// 지도에서 지정한 목표점 (world m).
@@ -20,6 +22,7 @@ class AppServices {
   Future<void> start() async {
     link.setManualAddress(settings.droneIp);
     await link.start();
+    nav.status = ''; // 위치 제어 타이머 시작 (late 초기화)
     if (settings.projectPath.isNotEmpty) {
       try {
         plan.value = await FloorPlan.load(settings.projectPath);

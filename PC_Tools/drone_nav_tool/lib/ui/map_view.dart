@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../aoa/aoa_client.dart';
 import '../aoa/floor_plan.dart';
 import '../aoa/locationx_api.dart';
+import '../control/nav_controller.dart';
 
 /// world(m, y-up) → 화면 px 변환.
 class MapTransform {
@@ -45,6 +46,7 @@ class MapView extends StatefulWidget {
   final Rect? geofence;
   final VoidCallback onDroneTap;
   final ValueChanged<Offset> onMapTap;
+  final NavController? nav;
 
   const MapView({
     super.key,
@@ -57,6 +59,7 @@ class MapView extends StatefulWidget {
     required this.geofence,
     required this.onDroneTap,
     required this.onMapTap,
+    this.nav,
   });
 
   @override
@@ -129,6 +132,7 @@ class MapViewState extends State<MapView> {
                   droneSelected: widget.droneSelected,
                   geofence: widget.geofence,
                   hover: _hover,
+                  nav: widget.nav,
                 ),
               ),
             ),
@@ -149,6 +153,7 @@ class _MapPainter extends CustomPainter {
   final bool droneSelected;
   final Rect? geofence;
   final Offset? hover;
+  final NavController? nav;
 
   _MapPainter({
     required this.t,
@@ -160,6 +165,7 @@ class _MapPainter extends CustomPainter {
     required this.droneSelected,
     required this.geofence,
     required this.hover,
+    this.nav,
   });
 
   static const _bg = Color(0xFFF4F6F8);
@@ -190,6 +196,7 @@ class _MapPainter extends CustomPainter {
     }
     if (target != null) _drawTarget(canvas, t.toScreen(target!));
     if (drone != null) _drawTag(canvas, drone, true);
+    if (drone != null) _drawNav(canvas, drone);
     _drawHover(canvas, size);
   }
 
@@ -283,6 +290,43 @@ class _MapPainter extends CustomPainter {
       canvas.drawCircle(c, 5, Paint()..color = color);
       _text(canvas, _short(tag.id), c + const Offset(7, -6), TextStyle(fontSize: 10, color: color));
     }
+  }
+
+  /// 위치 제어 중: 유지 목표(초록 +), 명령 가속도(주황, 1 m/s² = 0.5 m), 추정 속도(파랑, 1 m/s = 1 m)
+  void _drawNav(Canvas canvas, TagTrack drone) {
+    final n = nav;
+    if (n == null || n.state == NavState.idle) return;
+    final c = t.toScreen(n.pc.pos ?? drone.xy);
+    final tg = n.target;
+    if (tg != null) {
+      final p = t.toScreen(tg);
+      final g = Paint()
+        ..color = const Color(0xFF2E7D32)
+        ..strokeWidth = 2.5;
+      canvas.drawLine(p + const Offset(-8, 0), p + const Offset(8, 0), g);
+      canvas.drawLine(p + const Offset(0, -8), p + const Offset(0, 8), g);
+    }
+    _arrow(canvas, c, t.toScreen((n.pc.pos ?? drone.xy) + n.pc.accel * 0.5) , const Color(0xFFEF6C00));
+    _arrow(canvas, c, t.toScreen((n.pc.pos ?? drone.xy) + n.pc.vel), const Color(0xFF1E88E5));
+  }
+
+  void _arrow(Canvas canvas, Offset a, Offset b, Color color) {
+    final len = (b - a).distance;
+    if (len < 4) return;
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(a, b, paint);
+    final dir = (b - a) / len;
+    final side = Offset(-dir.dy, dir.dx);
+    canvas.drawPath(
+        Path()
+          ..moveTo(b.dx, b.dy)
+          ..lineTo((b - dir * 10 + side * 5).dx, (b - dir * 10 + side * 5).dy)
+          ..lineTo((b - dir * 10 - side * 5).dx, (b - dir * 10 - side * 5).dy)
+          ..close(),
+        Paint()..color = color);
   }
 
   void _drawQuad(Canvas canvas, Offset c, Color color) {

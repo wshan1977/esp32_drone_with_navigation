@@ -10,6 +10,7 @@ const _reference = [
   'fd17000003ffbe1700000000003f01014143435f424941535f58000000000000094a53',
   'fd35000004ffbe540000000000000000000000000000cdcc4cbf0000000000000000000000000000000000000000000000000000000000000000fb0f010101a4f7',
   'fd20000005ffbe4c0000000000000000000000000000000000000000000000000000cdcc4c3f160001016ae4',
+  'fd0b000006ffbe450000000000005e01000000000114ea',
 ];
 
 String _hex(List<int> b) => b.map((e) => e.toRadixString(16).padLeft(2, '0')).join();
@@ -24,6 +25,7 @@ void main() {
       enc.paramSet('ACC_BIAS_X', 0.5),
       enc.setAltitude(0.8),
       enc.commandLong(MavCmd.navTakeoff, params: [0, 0, 0, 0, 0, 0, 0.8]),
+      enc.manualControl(throttle: 0.35),
     ];
     for (var i = 0; i < frames.length; i++) {
       expect(_hex(frames[i]), _reference[i], reason: 'frame $i');

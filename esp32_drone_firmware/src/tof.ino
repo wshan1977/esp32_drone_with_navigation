@@ -42,9 +42,19 @@ void readToF() {
 	tof.read(false);
 	tofStatus = tof.ranging_data.range_status;
 	tofSignal = tof.ranging_data.peak_signal_count_rate_MCPS;
-	if (tofStatus == VL53L1X::RangeValid) {
-		tofRange = tof.ranging_data.range_mm / 1000.0f;
-		tofTime = t;
+	switch (tofStatus) {
+		case VL53L1X::RangeValid:
+		case VL53L1X::RangeValidMinRangeClipped: // sitting on the ground: the sensor is ~2.5 cm above it, below its 4 cm minimum
+		case VL53L1X::RangeValidNoWrapCheckFail:
+			tofRange = tof.ranging_data.range_mm / 1000.0f;
+			tofTime = t;
+			break;
+		case VL53L1X::MinRangeFail: // target closer than the minimum: on the ground
+			tofRange = 0;
+			tofTime = t;
+			break;
+		default: // sigma/signal/phase failures: no usable distance
+			break;
 	}
 }
 

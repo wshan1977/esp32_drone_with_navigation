@@ -53,11 +53,36 @@ class DroneLink extends ChangeNotifier {
   double? altitudeTarget; // ALTHOLD 목표 (m), null = ALTHOLD 아님
   double thrust = 0; // 0..1
 
+  /// 모터 출력 0..1, 펌웨어 motors[] 순서: 0=RL 1=RR 2=FR 3=FL
+  List<double> motors = const [0, 0, 0, 0];
+
   /// 이륙 후 PC가 유지하는 목표 고도. 비행 중 10 Hz로 보내 펌웨어의 GCS 끊김 감시(1초)를 만족시킨다.
   double? commandedAltitude;
   Timer? _setpointTimer;
 
   bool get flying => armed && mode == FlightMode.althold;
+
+  /// 수동 스로틀 0..1 (STAB 모드). null이면 보내지 않는다. 켜져 있는 동안 20 Hz로 MANUAL_CONTROL을 보내며,
+  /// 끊기면 펌웨어 RC loss 안전장치(SF_RC_LOSS_TIME, 1초)가 천천히 내린다.
+  double? manualThrottle;
+  Timer? _manualTimer;
+
+  /// 위치 제어기의 기울기 명령 (-1..1, 펌웨어 CTL_TILT_MAX 비율). ALTHOLD에서 스로틀은 무시된다.
+  void sendTilt(double roll, double pitch) => _send(_enc.manualControl(roll: roll, pitch: pitch));
+
+  void setManualThrottle(double? value) {
+    manualThrottle = value?.clamp(0.0, 1.0);
+    if (manualThrottle == null) {
+      _manualTimer?.cancel();
+      _manualTimer = null;
+    } else {
+      _manualTimer ??= Timer.periodic(const Duration(milliseconds: 50), (_) {
+        final v = manualThrottle;
+        if (v != null) _send(_enc.manualControl(throttle: v));
+      });
+    }
+    _dirty = true;
+  }
   int _msgCount = 0;
   double msgRate = 0;
   DateTime _rateWindow = DateTime.now();
@@ -116,6 +141,7 @@ class DroneLink extends ChangeNotifier {
   void dispose() {
     _heartbeatTimer?.cancel();
     _setpointTimer?.cancel();
+    _manualTimer?.cancel();
     _uiTimer?.cancel();
     _socket?.close();
     _console.close();
@@ -192,7 +218,10 @@ class DroneLink extends ChangeNotifier {
         final first = !connected;
         droneAddress = dg.address; // GCS(type 6)가 아닌 하트비트 = 드론
         _handle(m);
-        if (first) _send(_enc.heartbeat()); // 바로 응답해 드론이 텔레메트리를 시작하게
+        if (first) {
+          _send(_enc.heartbeat()); // 바로 응답해 드론이 텔레메트리를 시작하게
+          if (params.isEmpty) Future.delayed(const Duration(seconds: 1), requestParams);
+        }
         continue;
       }
       _handle(m);
@@ -223,6 +252,8 @@ class DroneLink extends ChangeNotifier {
         accX = m.i16(4) / 1000;
         accY = m.i16(6) / 1000;
         accZ = m.i16(8) / 1000;
+      case MavId.actuatorControlTarget:
+        motors = [for (var i = 0; i < 4; i++) m.f32(8 + i * 4)];
       case MavId.distanceSensor:
         tofPresent = true;
         tofM = m.u8(38) == 1 ? null : m.u16(8) / 100.0;
@@ -284,6 +315,7 @@ class DroneLink extends ChangeNotifier {
 
   /// 비상정지: 시동 해제를 여러 번 보낸다 (UDP 유실 대비).
   void emergencyStop() {
+    if (manualThrottle != null) setManualThrottle(0);
     for (var i = 0; i < 5; i++) {
       Future.delayed(Duration(milliseconds: i * 30), disarm);
     }
@@ -291,6 +323,7 @@ class DroneLink extends ChangeNotifier {
 
   /// 이륙: 펌웨어가 ALTHOLD로 목표 높이까지 상승한다 (시동 상태여야 함).
   void takeoff(double height) {
+    setManualThrottle(null); // 고도 유지가 추력을 맡는다 (펌웨어는 ALTHOLD에서 RC loss를 보지 않음)
     commandedAltitude = height;
     _send(_enc.commandLong(MavCmd.navTakeoff, params: [0, 0, 0, 0, 0, 0, height]));
     _setpointTimer ??= Timer.periodic(const Duration(milliseconds: 100), (_) => _streamSetpoint());

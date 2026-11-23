@@ -16,8 +16,10 @@
 #define ALT_LANDED_CLIMB     0.15f // and moving slower than this, m/s
 #define ALT_LANDED_TIME      1.0f  // for this long, s
 #define ALT_GCS_TIMEOUT      1.0f  // land if the GCS that commanded the flight goes silent, s
+#define ALT_INPUT_TIMEOUT    0.3f  // level the drone if GCS tilt commands stop for this long, s
+#define ALT_AIRBORNE_HEIGHT  0.05f // above this the drone is in the air (control integrators enabled), m
 #define ALT_ACC_LIMIT        4.0f  // clamp of the vertical acceleration used for prediction, m/s^2
-#define ALT_ACC_CHECK        0.2f  // take-off needs |acc| within this fraction of 1 g (calibrated accelerometer)
+#define ALT_ACC_CHECK        0.3f  // take-off needs the filtered |acc| within this fraction of 1 g (calibrated accelerometer)
 
 extern bool armed;
 extern int mode;
@@ -25,6 +27,7 @@ extern const int STAB, ALTHOLD;
 extern float thrustTarget, motThrMin;
 extern bool tofEnabled;
 extern float tofRange, tofTime;
+extern float controlTime;
 
 float altitude = NAN;       // height above the take-off surface, m
 float climbRate = 0;        // vertical speed, m/s (up +)
@@ -33,6 +36,8 @@ float altValidTime = NAN;   // time of the last ToF fusion
 float altitudeSetpoint = 0; // commanded height, m
 float altitudeTarget = 0;   // rate-limited setpoint followed by the controller, m
 bool altHoldActive = false;
+bool altRampStart = true;   // next controlAltitude() step starts the thrust ramp
+float altLastThrust = 0;
 bool landing = false;
 bool altLost = false;       // ToF lost in flight: failsafe descend
 bool gcsFlight = false;     // flight commanded over MAVLink: GCS link loss lands
@@ -44,12 +49,22 @@ float altClimbMax = 0.4;    // m/s, ALT_CLIMB_MAX
 float altLandSpeed = 0.25;  // m/s, ALT_LAND_SPD
 float altMax = 2.0;         // ceiling, m, ALT_MAX
 float altThrMax = 0.85;     // thrust limit in ALTHOLD, ALT_THR_MAX
+float altThrSlew = 2.0;     // max thrust increase per second, softens the motor current surge at take-off, ALT_THR_SLEW
+float altSpoolThrust = 0.7; // take-off starts at this fraction of hover thrust: a slow spin-up skids the drone sideways, ALT_SPOOL
 PID climbPID(0.15, 0.3, 0, 0.25); // climb rate error -> thrust correction, ALT_VEL_P/I
 
 LowPassFilter<float> accVertFilter(0.1);
+LowPassFilter<float> accNormFilter(0.001); // ~1.5 s average of |acc|: motor vibration makes single samples swing ±30%
 
 bool altitudeValid() {
 	return !isnan(altitude) && t - altValidTime < ALT_TOF_TIMEOUT;
+}
+
+// Off the ground. On the ground the attitude controllers can't move the frame, so their integrators
+// must not run (they wind up and drive single motors or a diagonal pair to zero)
+bool airborne() {
+	if (altitudeValid()) return altitude > ALT_AIRBORNE_HEIGHT;
+	return thrustTarget > altHoverThrust * 0.8f; // no ToF: assume lift-off near hover thrust
 }
 
 float cosTilt() {
@@ -62,6 +77,7 @@ void estimateAltitude() {
 
 	// predict with the vertical acceleration
 	Vector up = Quaternion::rotateVector(Vector(0, 0, 1), attitude);
+	accNormFilter.update(acc.norm());
 	float accVert = accVertFilter.update(constrain(Vector::dot(acc, up) - ONE_G, -ALT_ACC_LIMIT, ALT_ACC_LIMIT));
 	if (!isnan(altitude)) {
 		climbRate += accVert * dt;
@@ -103,8 +119,9 @@ bool startTakeoff(float height) {
 		print("Take-off refused: no ToF altitude\n");
 		return false;
 	}
-	if (abs(acc.norm() - ONE_G) > ONE_G * ALT_ACC_CHECK) {
-		print("Take-off refused: accelerometer reads %.1f m/s^2, calibrate it (ca)\n", acc.norm());
+	float accNorm = accNormFilter.output;
+	if (abs(accNorm - ONE_G) > ONE_G * ALT_ACC_CHECK) {
+		print("Take-off refused: accelerometer reads %.1f m/s^2, calibrate it (ca)\n", accNorm);
 		return false;
 	}
 	altitudeTarget = altitude;
@@ -113,6 +130,7 @@ bool startTakeoff(float height) {
 	landing = false;
 	altLost = false;
 	altHoldActive = true;
+	altRampStart = true;
 	mode = ALTHOLD;
 	print("Take-off to %.2f m\n", altitudeSetpoint);
 	return true;
@@ -151,6 +169,7 @@ void controlAltitude() {
 		altitudeTarget = altitudeSetpoint = altitude;
 		climbPID.reset();
 		altHoldActive = true;
+		altRampStart = true;
 	}
 	if (gcsFlight && !landing && t - gcsLastSeen > ALT_GCS_TIMEOUT) {
 		print("GCS link lost, landing\n");
@@ -163,7 +182,15 @@ void controlAltitude() {
 
 	float climbTarget = constrain(altPosP * (altitudeTarget - altitude), -downSpeed, altClimbMax);
 	float thrust = (altHoverThrust + climbPID.update(climbTarget - climbRate)) / cosTilt();
+	// thrustTarget still holds the stick thrust here (idle on the ground), so the ramp starts from the current thrust
+	if (altRampStart) {
+		altLastThrust = max(thrustTarget, motThrMin);
+		if (!airborne()) altLastThrust = max(altLastThrust, altHoverThrust * altSpoolThrust); // jump close to lift-off
+	}
+	altRampStart = false;
+	thrust = min(thrust, altLastThrust + altThrSlew * dt); // only increases are rate limited
 	thrustTarget = constrain(thrust, motThrMin, altThrMax);
+	altLastThrust = thrustTarget;
 
 	// touchdown detection
 	static float landedSince = NAN;
@@ -179,6 +206,15 @@ void controlAltitude() {
 	} else {
 		landedSince = NAN;
 	}
+}
+
+// In ALTHOLD the GCS position controller streams roll/pitch as MANUAL_CONTROL. If that stream stops,
+// level the drone instead of keeping the last tilt (the GCS link check lands it later)
+void altHoldInputTimeout() {
+	if (mode != ALTHOLD || t - controlTime < ALT_INPUT_TIMEOUT) return;
+	controlRoll = 0;
+	controlPitch = 0;
+	controlYaw = 0;
 }
 
 // Called from failsafe(): descend open-loop when the altitude source is gone

@@ -59,6 +59,8 @@ Parameter parameters[] = {
 	{"CTL_R_RATE_MAX", &maxRate.x},
 	{"CTL_Y_RATE_MAX", &maxRate.z},
 	{"CTL_TILT_MAX", &tiltMax},
+	{"CTL_TRIM_ROLL", &trimRoll},
+	{"CTL_TRIM_PITCH", &trimPitch},
 	{"CTL_FLT_MODE_0", &flightModes[0]},
 	{"CTL_FLT_MODE_1", &flightModes[1]},
 	{"CTL_FLT_MODE_2", &flightModes[2]},
@@ -85,6 +87,8 @@ Parameter parameters[] = {
 	{"ALT_LAND_SPD", &altLandSpeed},
 	{"ALT_MAX", &altMax},
 	{"ALT_THR_MAX", &altThrMax},
+	{"ALT_THR_SLEW", &altThrSlew},
+	{"ALT_SPOOL", &altSpoolThrust},
 	// motors
 	{"MOT_PIN_FL", &motorPins[MOTOR_FRONT_LEFT], setupMotors},
 	{"MOT_PIN_FR", &motorPins[MOTOR_FRONT_RIGHT], setupMotors},

@@ -60,6 +60,7 @@ PID pitchPID(PITCH_P, PITCH_I, PITCH_D);
 PID yawPID(YAW_P, 0, 0);
 Vector maxRate(ROLLRATE_MAX, PITCHRATE_MAX, YAWRATE_MAX);
 float tiltMax = TILT_MAX;
+float trimRoll = 0, trimPitch = 0; // level trim added to the attitude target, deg (CTL_TRIM_ROLL/PITCH)
 
 Quaternion attitudeTarget;
 Vector ratesTarget;
@@ -73,6 +74,7 @@ extern float controlRoll, controlPitch, controlThrottle, controlYaw, controlMode
 extern float batteryVoltage;  // battery.ino
 
 void control() {
+	altHoldInputTimeout();
 	interpretControls();
 #if WEB_RC_ENABLED
 	interpretWebRC();
@@ -127,8 +129,9 @@ void interpretControls() {
 
 	if (mode == STAB || mode == ALTHOLD) { // ALTHOLD: sticks set the attitude, thrust comes from controlAltitude()
 		float yawTarget = attitudeTarget.getYaw();
-		if (!armed || invalid(yawTarget) || controlYaw != 0) yawTarget = attitude.getYaw(); // reset yaw target
-		attitudeTarget = Quaternion::fromEuler(Vector(controlRoll * tiltMax, controlPitch * tiltMax, yawTarget));
+		if (!armed || invalid(yawTarget) || controlYaw != 0 || !airborne()) yawTarget = attitude.getYaw(); // reset yaw target (also on the ground)
+		attitudeTarget = Quaternion::fromEuler(Vector(controlRoll * tiltMax + radians(trimRoll),
+			controlPitch * tiltMax + radians(trimPitch), yawTarget));
 		ratesExtra = Vector(0, 0, -controlYaw * maxRate.z); // positive yaw stick means clockwise rotation in FLU
 	}
 
@@ -167,6 +170,12 @@ void controlRates() {
 	if (!armed || ratesTarget.invalid() || thrustTarget < motThrMin) return; // skip rates control
 
 	Vector error = ratesTarget - rates;
+
+	if (!airborne()) { // integrators wind up while the frame can't rotate on the ground
+		rollRatePID.integral = 0;
+		pitchRatePID.integral = 0;
+		yawRatePID.integral = 0;
+	}
 
 	// Calculate desired torque, where 0 - no torque, 1 - maximum possible torque
 	torqueTarget.x = rollRatePID.update(error.x);

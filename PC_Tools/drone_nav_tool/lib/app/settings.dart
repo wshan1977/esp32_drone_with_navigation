@@ -21,6 +21,9 @@ class AppSettings {
   /// 드론 기수 방향: false = ESP32 안테나 쪽, true = USB 쪽 (보정 참고 이미지 선택)
   bool noseAtUsb = false;
 
+  /// 이륙할 때 드론 기수가 향한 지도 방향 (deg, +x=0, +y=90, 반시계 +). 위치 제어의 방향 기준
+  double noseHeadingDeg = 0;
+
   static File get _file {
     final base = Platform.environment['APPDATA'] ?? Directory.current.path;
     return File('$base${Platform.pathSeparator}DroneNavTool${Platform.pathSeparator}settings.json');
@@ -42,6 +45,7 @@ class AppSettings {
       if (s.droneIp == '192.168.4.1') s.droneIp = ''; // 이전 버전의 AP 기본값 → 자동 검색
       s.projectPath = j['projectPath'] as String? ?? '';
       s.noseAtUsb = j['noseAtUsb'] == true;
+      s.noseHeadingDeg = (j['noseHeadingDeg'] as num?)?.toDouble() ?? 0;
     } catch (_) {
       // 첫 실행 또는 손상된 파일 → 기본값
     }
@@ -63,6 +67,7 @@ class AppSettings {
         'droneIp': droneIp,
         'projectPath': projectPath,
         'noseAtUsb': noseAtUsb,
+        'noseHeadingDeg': noseHeadingDeg,
       }));
     } catch (_) {}
   }
